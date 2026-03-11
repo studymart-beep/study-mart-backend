@@ -8,11 +8,19 @@ dotenv.config();
 
 const app = express();
 
-// Middleware
-app.use(cors({
-  origin: 'http://localhost:3000',
-  credentials: true
-}));
+// CORS configuration - Allow both localhost and production frontend
+const corsOptions = {
+  origin: [
+    'http://localhost:3000',
+    'https://study-mart-phi.vercel.app',
+    'https://study-mart.vercel.app',
+    'https://www.study-mart.vercel.app'
+  ],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -154,11 +162,21 @@ app.get('/', (req, res) => {
         updateProduct: 'PUT /api/seller/products/:id',
         deleteProduct: 'DELETE /api/seller/products/:id'
       },
+      health: 'GET /api/health',
       uploads: {
         test: 'GET /test-uploads',
         files: 'GET /uploads/:filename'
       }
     }
+  });
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: 'Study-Mart API is healthy',
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -195,6 +213,7 @@ app.listen(PORT, () => {
 
   console.log('📚 Available Routes:');
   console.log('   GET  / - API Info');
+  console.log('   GET  /api/health - Health check');
   console.log('   GET  /test-uploads - Check uploads folder');
   console.log('   POST /api/auth/signup - Register user');
   console.log('   POST /api/auth/signin - Login user');
