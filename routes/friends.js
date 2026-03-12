@@ -28,8 +28,7 @@ router.get('/people', verifyToken, async (req, res) => {
         avatar_url,
         role,
         status,
-        last_seen,
-        friends_count
+        last_seen
       `)
       .neq('id', req.user.id)
       .order('full_name');
@@ -60,7 +59,8 @@ router.get('/people', verifyToken, async (req, res) => {
 
     const usersWithStatus = data.map(user => ({
       ...user,
-      friend_status: friendMap[user.id]?.status || 'none'
+      friend_status: friendMap[user.id]?.status || 'none',
+      online: user.status === 'online'
     }));
 
     res.json({
@@ -87,7 +87,7 @@ router.post('/request', verifyToken, async (req, res) => {
       .from('friends')
       .select()
       .or(`and(user_id.eq.${req.user.id},friend_id.eq.${receiver_id}),and(user_id.eq.${receiver_id},friend_id.eq.${req.user.id})`)
-      .single();
+      .maybeSingle();
 
     if (existingFriend) {
       return res.status(400).json({ error: 'Already friends' });
@@ -98,7 +98,7 @@ router.post('/request', verifyToken, async (req, res) => {
       .from('friend_requests')
       .select()
       .or(`and(sender_id.eq.${req.user.id},receiver_id.eq.${receiver_id}),and(sender_id.eq.${receiver_id},receiver_id.eq.${req.user.id})`)
-      .single();
+      .maybeSingle();
 
     if (existingRequest) {
       return res.status(400).json({ error: 'Friend request already exists' });
@@ -156,6 +156,36 @@ router.get('/requests', verifyToken, async (req, res) => {
   }
 });
 
+// Get sent friend requests
+router.get('/sent', verifyToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('friend_requests')
+      .select(`
+        *,
+        receiver:receiver_id (
+          id,
+          full_name,
+          email,
+          avatar_url
+        )
+      `)
+      .eq('sender_id', req.user.id)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      requests: data
+    });
+  } catch (error) {
+    console.error('Error fetching sent requests:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Accept friend request
 router.put('/request/:requestId/accept', verifyToken, async (req, res) => {
   try {
@@ -179,8 +209,8 @@ router.put('/request/:requestId/accept', verifyToken, async (req, res) => {
       .update({ status: 'accepted' })
       .eq('id', requestId);
 
-    // Create friend relationship
-    const { error: friendError } = await supabase
+    // Create friend relationship (both ways)
+    const { error: friendError1 } = await supabase
       .from('friends')
       .insert([{
         user_id: req.user.id,
@@ -188,11 +218,15 @@ router.put('/request/:requestId/accept', verifyToken, async (req, res) => {
         status: 'accepted'
       }]);
 
-    if (friendError) throw friendError;
+    const { error: friendError2 } = await supabase
+      .from('friends')
+      .insert([{
+        user_id: request.sender_id,
+        friend_id: req.user.id,
+        status: 'accepted'
+      }]);
 
-    // Update friends count for both users
-    await supabase.rpc('increment_friends_count', { user_id: req.user.id });
-    await supabase.rpc('increment_friends_count', { user_id: request.sender_id });
+    if (friendError1 || friendError2) throw friendError1 || friendError2;
 
     res.json({
       success: true,
@@ -254,6 +288,63 @@ router.get('/list', verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching friends:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get friend status with a specific user
+router.get('/status/:userId', verifyToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Check if friends
+    const { data: friends } = await supabase
+      .from('friends')
+      .select('*')
+      .or(`and(user_id.eq.${req.user.id},friend_id.eq.${userId}),and(user_id.eq.${userId},friend_id.eq.${req.user.id})`)
+      .eq('status', 'accepted')
+      .maybeSingle();
+
+    if (friends) {
+      return res.json({ success: true, status: 'friends' });
+    }
+
+    // Check pending requests
+    const { data: requests } = await supabase
+      .from('friend_requests')
+      .select('*')
+      .or(`and(sender_id.eq.${req.user.id},receiver_id.eq.${userId}),and(sender_id.eq.${userId},receiver_id.eq.${req.user.id})`)
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    if (requests) {
+      return res.json({ success: true, status: 'pending' });
+    }
+
+    res.json({ success: true, status: 'none' });
+  } catch (error) {
+    console.error('Error checking friend status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Unfriend
+router.delete('/:friendId', verifyToken, async (req, res) => {
+  try {
+    const { friendId } = req.params;
+
+    // Delete both friendship records
+    await supabase
+      .from('friends')
+      .delete()
+      .or(`and(user_id.eq.${req.user.id},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${req.user.id})`);
+
+    res.json({
+      success: true,
+      message: 'Friend removed'
+    });
+  } catch (error) {
+    console.error('Error removing friend:', error);
     res.status(500).json({ error: error.message });
   }
 });
