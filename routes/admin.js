@@ -277,6 +277,8 @@ router.put('/users/:userId', verifyToken, checkAdmin, async (req, res) => {
   }
 });
 
+// ==================== SELLER APPLICATION ROUTES ====================
+
 // Get all seller applications
 router.get('/seller-applications', verifyToken, checkAdmin, async (req, res) => {
   try {
@@ -311,6 +313,8 @@ router.get('/seller-applications', verifyToken, checkAdmin, async (req, res) => 
 // Get seller application statistics
 router.get('/seller-applications/stats', verifyToken, checkAdmin, async (req, res) => {
   try {
+    console.log('📊 Fetching seller application stats...');
+    
     const [pending, approved, rejected, total] = await Promise.all([
       supabase.from('seller_applications').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('seller_applications').select('*', { count: 'exact', head: true }).eq('status', 'approved'),
@@ -328,7 +332,39 @@ router.get('/seller-applications/stats', verifyToken, checkAdmin, async (req, re
       }
     });
   } catch (error) {
-    console.error('Error fetching seller stats:', error);
+    console.error('❌ Error fetching seller stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single seller application
+router.get('/seller-applications/:id', verifyToken, checkAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const { data, error } = await supabase
+      .from('seller_applications')
+      .select(`
+        *,
+        user:user_id (
+          id,
+          email,
+          full_name,
+          avatar_url,
+          created_at
+        )
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      application: data
+    });
+  } catch (error) {
+    console.error('❌ Error fetching application:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -402,6 +438,24 @@ router.post('/seller-applications/:id/approve', verifyToken, checkAdmin, async (
       .update({ role: 'seller' })
       .eq('id', app.user_id);
 
+    // Create notification for the seller
+    await supabase
+      .from('notifications')
+      .insert([{
+        user_id: app.user_id,
+        type: 'seller_approved',
+        title: '🎉 Seller Application Approved!',
+        message: `Congratulations! Your application to become a seller has been approved. You can now start adding products to the marketplace.`,
+        data: { 
+          application_id: id,
+          business_name: app.business_name
+        },
+        read: false,
+        created_at: new Date()
+      }]);
+
+    console.log(`✅ Seller application ${id} approved and notification sent`);
+
     res.json({
       success: true,
       message: 'Seller approved successfully'
@@ -440,13 +494,26 @@ router.post('/seller-applications/:id/reject', verifyToken, checkAdmin, async (r
       .from('seller_applications')
       .update({
         status: 'rejected',
-        rejection_reason: reason || 'Application rejected',
+        rejection_reason: reason || 'Your application did not meet our requirements at this time.',
         reviewed_at: new Date(),
         reviewed_by: req.user.id
       })
       .eq('id', id);
 
     if (error) throw error;
+
+    // Create notification for rejection
+    await supabase
+      .from('notifications')
+      .insert([{
+        user_id: app.user_id,
+        type: 'seller_rejected',
+        title: 'Seller Application Update',
+        message: reason || 'Your seller application was not approved at this time.',
+        data: { application_id: id },
+        read: false,
+        created_at: new Date()
+      }]);
 
     res.json({
       success: true,
@@ -457,6 +524,112 @@ router.post('/seller-applications/:id/reject', verifyToken, checkAdmin, async (r
     res.status(500).json({ error: error.message });
   }
 });
+
+// Get pending seller applications
+router.get('/seller-applications/pending', verifyToken, checkAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('seller_applications')
+      .select(`
+        *,
+        user:user_id (
+          id,
+          email,
+          full_name
+        )
+      `)
+      .eq('status', 'pending')
+      .eq('fee_paid', true)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      applications: data || []
+    });
+  } catch (error) {
+    console.error('❌ Error fetching pending applications:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== NOTIFICATION ROUTES ====================
+
+// Get user notifications
+router.get('/notifications', verifyToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Get unread count
+    const { count } = await supabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', req.user.id)
+      .eq('read', false);
+
+    res.json({
+      success: true,
+      notifications: data || [],
+      unreadCount: count || 0
+    });
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark notification as read
+router.put('/notifications/:id/read', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('id', id)
+      .eq('user_id', req.user.id);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: 'Notification marked as read'
+    });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark all notifications as read
+router.put('/notifications/read-all', verifyToken, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', req.user.id)
+      .eq('read', false);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: 'All notifications marked as read'
+    });
+  } catch (error) {
+    console.error('Error marking all as read:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== REVENUE REPORTS ====================
 
 // Get revenue reports
 router.get('/reports/revenue', verifyToken, checkAdmin, async (req, res) => {
