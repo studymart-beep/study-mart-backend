@@ -50,41 +50,28 @@ router.get('/stats', verifyToken, checkAdmin, async (req, res) => {
   try {
     console.log('📊 Fetching admin stats...');
     
-    // Get total users
-    const { count: totalUsers, error: usersError } = await supabase
+    const { count: totalUsers } = await supabase
       .from('profiles')
       .select('*', { count: 'exact', head: true });
 
-    // Get total courses
-    const { count: totalCourses, error: coursesError } = await supabase
+    const { count: totalCourses } = await supabase
       .from('courses')
       .select('*', { count: 'exact', head: true });
 
-    // Get pending instructor applications
-    const { count: pendingInstructors, error: pendingError } = await supabase
+    const { count: pendingInstructors } = await supabase
       .from('instructor_applications')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'pending');
 
-    // Get pending course approvals
-    const { count: pendingCourses, error: pendingCoursesError } = await supabase
+    const { count: pendingCourses } = await supabase
       .from('courses')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'pending');
 
-    // Get published courses
-    const { count: publishedCourses, error: publishedError } = await supabase
+    const { count: publishedCourses } = await supabase
       .from('courses')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'published');
-
-    console.log('📊 Stats:', {
-      totalUsers,
-      totalCourses,
-      pendingInstructors,
-      pendingCourses,
-      publishedCourses
-    });
 
     res.json({
       success: true,
@@ -102,24 +89,11 @@ router.get('/stats', verifyToken, checkAdmin, async (req, res) => {
   }
 });
 
-// Get ALL courses for admin (UNFILTERED - shows everything)
+// Get ALL courses for admin
 router.get('/courses', verifyToken, checkAdmin, async (req, res) => {
   try {
     console.log('🔍 Admin fetching ALL courses...');
-    console.log('👤 Admin user ID:', req.user.id);
     
-    // First, check if any courses exist at all
-    const { count: totalCount, error: countError } = await supabase
-      .from('courses')
-      .select('*', { count: 'exact', head: true });
-
-    console.log(`📊 Total courses in database: ${totalCount || 0}`);
-
-    if (countError) {
-      console.error('❌ Error counting courses:', countError);
-    }
-
-    // Fetch all courses with related data
     const { data, error } = await supabase
       .from('courses')
       .select(`
@@ -136,23 +110,7 @@ router.get('/courses', verifyToken, checkAdmin, async (req, res) => {
       `)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('❌ Database error:', error);
-      throw error;
-    }
-
-    console.log(`📚 Found ${data?.length || 0} courses total`);
-    
-    if (data && data.length > 0) {
-      console.log('📋 First course:', {
-        id: data[0].id,
-        title: data[0].title,
-        status: data[0].status,
-        instructor: data[0].profiles?.full_name
-      });
-    } else {
-      console.log('⚠️ No courses found in database');
-    }
+    if (error) throw error;
 
     // Get content counts for each course
     for (let course of data || []) {
@@ -173,10 +131,7 @@ router.get('/courses', verifyToken, checkAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error in /admin/courses:', error);
-    res.status(400).json({ 
-      success: false, 
-      error: error.message 
-    });
+    res.status(400).json({ error: error.message });
   }
 });
 
@@ -187,73 +142,49 @@ router.delete('/courses/:courseId', verifyToken, checkAdmin, async (req, res) =>
 
     console.log(`🗑️ Deleting course: ${courseId}`);
 
-    // First, get course details
-    const { data: course, error: courseError } = await supabase
-      .from('courses')
-      .select('title')
-      .eq('id', courseId)
-      .single();
-
-    if (courseError) {
-      console.error('❌ Error finding course:', courseError);
-    } else {
-      console.log(`📚 Deleting course: ${course.title}`);
-    }
-
-    // Get all associated files to delete them
     const [videos, pdfs] = await Promise.all([
       supabase.from('course_videos').select('file_name').eq('course_id', courseId),
       supabase.from('course_pdfs').select('file_name').eq('course_id', courseId)
     ]);
 
-    // Delete video files from filesystem
+    // Delete video files
     if (videos.data && videos.data.length > 0) {
-      console.log(`🎬 Deleting ${videos.data.length} video files...`);
       for (const video of videos.data) {
         if (video.file_name) {
           const filePath = path.join(__dirname, '../uploads', video.file_name);
           try {
             if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
-              console.log(`✅ Deleted video file: ${video.file_name}`);
             }
           } catch (fileErr) {
-            console.error(`❌ Error deleting video file: ${video.file_name}`, fileErr);
+            console.error(`Error deleting video file: ${video.file_name}`, fileErr);
           }
         }
       }
     }
 
-    // Delete PDF files from filesystem
+    // Delete PDF files
     if (pdfs.data && pdfs.data.length > 0) {
-      console.log(`📄 Deleting ${pdfs.data.length} PDF files...`);
       for (const pdf of pdfs.data) {
         if (pdf.file_name) {
           const filePath = path.join(__dirname, '../uploads', pdf.file_name);
           try {
             if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
-              console.log(`✅ Deleted PDF file: ${pdf.file_name}`);
             }
           } catch (fileErr) {
-            console.error(`❌ Error deleting PDF file: ${pdf.file_name}`, fileErr);
+            console.error(`Error deleting PDF file: ${pdf.file_name}`, fileErr);
           }
         }
       }
     }
 
-    // Delete course (this will cascade delete videos, pdfs, qas due to foreign key constraints)
     const { error } = await supabase
       .from('courses')
       .delete()
       .eq('id', courseId);
 
-    if (error) {
-      console.error('❌ Error deleting course from database:', error);
-      throw error;
-    }
-
-    console.log(`✅ Course ${courseId} deleted successfully`);
+    if (error) throw error;
 
     res.json({
       success: true,
@@ -261,10 +192,7 @@ router.delete('/courses/:courseId', verifyToken, checkAdmin, async (req, res) =>
     });
   } catch (error) {
     console.error('❌ Error deleting course:', error);
-    res.status(400).json({ 
-      success: false, 
-      error: error.message 
-    });
+    res.status(400).json({ error: error.message });
   }
 });
 
@@ -273,8 +201,6 @@ router.put('/courses/:courseId/approve', verifyToken, checkAdmin, async (req, re
   try {
     const { courseId } = req.params;
     const { status } = req.body;
-
-    console.log(`📝 Updating course ${courseId} to status: ${status}`);
 
     if (!['published', 'rejected'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
@@ -292,8 +218,6 @@ router.put('/courses/:courseId/approve', verifyToken, checkAdmin, async (req, re
 
     if (error) throw error;
 
-    console.log(`✅ Course ${courseId} ${status} successfully`);
-
     res.json({
       success: true,
       message: `Course ${status === 'published' ? 'approved' : 'rejected'} successfully`,
@@ -308,8 +232,6 @@ router.put('/courses/:courseId/approve', verifyToken, checkAdmin, async (req, re
 // Get all users
 router.get('/users', verifyToken, checkAdmin, async (req, res) => {
   try {
-    console.log('👥 Fetching all users...');
-    
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
@@ -317,14 +239,11 @@ router.get('/users', verifyToken, checkAdmin, async (req, res) => {
 
     if (error) throw error;
 
-    console.log(`👥 Found ${data?.length || 0} users`);
-
     res.json({
       success: true,
       users: data
     });
   } catch (error) {
-    console.error('❌ Error fetching users:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -334,8 +253,6 @@ router.put('/users/:userId', verifyToken, checkAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
     const { role, is_approved } = req.body;
-
-    console.log(`👤 Updating user ${userId} to role: ${role}`);
 
     const { data, error } = await supabase
       .from('profiles')
@@ -350,129 +267,36 @@ router.put('/users/:userId', verifyToken, checkAdmin, async (req, res) => {
 
     if (error) throw error;
 
-    console.log(`✅ User ${userId} updated successfully`);
-
     res.json({
       success: true,
       message: 'User updated successfully',
       user: data
     });
   } catch (error) {
-    console.error('❌ Error updating user:', error);
     res.status(400).json({ error: error.message });
   }
 });
-
-// Get pending instructor applications
-router.get('/applications/pending', verifyToken, checkAdmin, async (req, res) => {
-  try {
-    console.log('📝 Fetching pending applications...');
-    
-    const { data, error } = await supabase
-      .from('instructor_applications')
-      .select(`
-        *,
-        profiles:user_id (
-          full_name,
-          email
-        )
-      `)
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    console.log(`📝 Found ${data?.length || 0} pending applications`);
-
-    res.json({
-      success: true,
-      applications: data
-    });
-  } catch (error) {
-    console.error('❌ Error fetching applications:', error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// Approve or reject instructor application
-router.put('/applications/:applicationId', verifyToken, checkAdmin, async (req, res) => {
-  try {
-    const { applicationId } = req.params;
-    const { status } = req.body;
-
-    console.log(`📝 Updating application ${applicationId} to: ${status}`);
-
-    if (!['approved', 'rejected'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
-    }
-
-    // Get application details
-    const { data: application, error: fetchError } = await supabase
-      .from('instructor_applications')
-      .select('user_id')
-      .eq('id', applicationId)
-      .single();
-
-    if (fetchError) throw fetchError;
-
-    // Update application status
-    const { data, error } = await supabase
-      .from('instructor_applications')
-      .update({
-        status: status,
-        reviewed_by: req.user.id,
-        reviewed_at: new Date()
-      })
-      .eq('id', applicationId)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // If approved, update user profile to instructor
-    if (status === 'approved') {
-      console.log(`✅ Approving user ${application.user_id} as instructor`);
-      await supabase
-        .from('profiles')
-        .update({
-          role: 'instructor',
-          is_approved: true,
-          updated_at: new Date()
-        })
-        .eq('id', application.user_id);
-    }
-
-    console.log(`✅ Application ${applicationId} ${status} successfully`);
-
-    res.json({
-      success: true,
-      message: `Application ${status} successfully`,
-      application: data
-    });
-  } catch (error) {
-    console.error('❌ Error updating application:', error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// ==================== SELLER APPLICATION ROUTES ====================
 
 // Get all seller applications
 router.get('/seller-applications', verifyToken, checkAdmin, async (req, res) => {
   try {
-    console.log('👥 Fetching seller applications...');
+    console.log('📝 Fetching all seller applications...');
     
     const { data, error } = await supabase
       .from('seller_applications')
       .select(`
         *,
-        user:user_id (id, email, full_name)
+        user:user_id (
+          id,
+          email,
+          full_name,
+          avatar_url,
+          created_at
+        )
       `)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-
-    console.log(`📝 Found ${data?.length || 0} seller applications`);
 
     res.json({
       success: true,
@@ -484,13 +308,38 @@ router.get('/seller-applications', verifyToken, checkAdmin, async (req, res) => 
   }
 });
 
+// Get seller application statistics
+router.get('/seller-applications/stats', verifyToken, checkAdmin, async (req, res) => {
+  try {
+    const [pending, approved, rejected, total] = await Promise.all([
+      supabase.from('seller_applications').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('seller_applications').select('*', { count: 'exact', head: true }).eq('status', 'approved'),
+      supabase.from('seller_applications').select('*', { count: 'exact', head: true }).eq('status', 'rejected'),
+      supabase.from('seller_applications').select('*', { count: 'exact', head: true })
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        pending: pending.count || 0,
+        approved: approved.count || 0,
+        rejected: rejected.count || 0,
+        total: total.count || 0
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching seller stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Approve seller application
 router.post('/seller-applications/:id/approve', verifyToken, checkAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { subaccount_code } = req.body;
 
-    console.log(`✅ Approving seller application ${id} with subaccount: ${subaccount_code}`);
+    console.log(`✅ Approving seller application ${id}`);
 
     if (!subaccount_code) {
       return res.status(400).json({ error: 'Subaccount code is required' });
@@ -503,9 +352,18 @@ router.post('/seller-applications/:id/approve', verifyToken, checkAdmin, async (
       .eq('id', id)
       .single();
 
-    if (appError) {
-      console.error('❌ Error fetching application:', appError);
-      throw appError;
+    if (appError) throw appError;
+
+    if (!app) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
+    if (app.status !== 'pending') {
+      return res.status(400).json({ error: 'Application is not pending' });
+    }
+
+    if (!app.fee_paid) {
+      return res.status(400).json({ error: 'Application fee has not been paid' });
     }
 
     // Update application status
@@ -520,7 +378,7 @@ router.post('/seller-applications/:id/approve', verifyToken, checkAdmin, async (
 
     if (updateError) throw updateError;
 
-    // Create seller profile with subaccount
+    // Create seller profile
     const { error: profileError } = await supabase
       .from('seller_profiles')
       .insert([{
@@ -528,15 +386,21 @@ router.post('/seller-applications/:id/approve', verifyToken, checkAdmin, async (
         business_name: app.business_name,
         category: app.category,
         location: app.location,
-        paystack_subaccount_code: subaccount_code
+        paystack_subaccount_code: subaccount_code,
+        created_at: new Date()
       }]);
 
     if (profileError) {
-      console.error('❌ Error creating seller profile:', profileError);
+      // Rollback
+      await supabase.from('seller_applications').update({ status: 'pending' }).eq('id', id);
       throw profileError;
     }
 
-    console.log(`✅ Seller application ${id} approved and profile created`);
+    // Update user role
+    await supabase
+      .from('profiles')
+      .update({ role: 'seller' })
+      .eq('id', app.user_id);
 
     res.json({
       success: true,
@@ -552,13 +416,31 @@ router.post('/seller-applications/:id/approve', verifyToken, checkAdmin, async (
 router.post('/seller-applications/:id/reject', verifyToken, checkAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const { reason } = req.body;
 
     console.log(`❌ Rejecting seller application ${id}`);
+
+    const { data: app, error: appError } = await supabase
+      .from('seller_applications')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (appError) throw appError;
+
+    if (!app) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
+    if (app.status !== 'pending') {
+      return res.status(400).json({ error: 'Application is not pending' });
+    }
 
     const { error } = await supabase
       .from('seller_applications')
       .update({
         status: 'rejected',
+        rejection_reason: reason || 'Application rejected',
         reviewed_at: new Date(),
         reviewed_by: req.user.id
       })
@@ -566,14 +448,12 @@ router.post('/seller-applications/:id/reject', verifyToken, checkAdmin, async (r
 
     if (error) throw error;
 
-    console.log(`✅ Seller application ${id} rejected`);
-
     res.json({
       success: true,
       message: 'Application rejected'
     });
   } catch (error) {
-    console.error('❌ Error rejecting seller application:', error);
+    console.error('❌ Error rejecting seller:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -604,7 +484,6 @@ router.get('/reports/revenue', verifyToken, checkAdmin, async (req, res) => {
 
     if (error) throw error;
 
-    // Calculate summary
     const summary = {
       totalRevenue: data.reduce((sum, p) => sum + (p.amount || 0), 0),
       totalFees: data.reduce((sum, p) => sum + (p.platform_fee || 0), 0),
@@ -620,7 +499,6 @@ router.get('/reports/revenue', verifyToken, checkAdmin, async (req, res) => {
       transactions: data
     });
   } catch (error) {
-    console.error('❌ Error fetching revenue reports:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -630,7 +508,6 @@ router.post('/setup', async (req, res) => {
   try {
     const { email, password, fullName } = req.body;
 
-    // Create user in Supabase Auth
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -638,7 +515,6 @@ router.post('/setup', async (req, res) => {
 
     if (authError) throw authError;
 
-    // Create admin profile
     const { error: profileError } = await supabase
       .from('profiles')
       .insert([
@@ -657,7 +533,6 @@ router.post('/setup', async (req, res) => {
       message: 'Admin user created successfully'
     });
   } catch (error) {
-    console.error('❌ Error creating admin:', error);
     res.status(400).json({ error: error.message });
   }
 });
