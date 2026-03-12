@@ -83,6 +83,8 @@ const adminRoutes = require('./routes/admin');
 const communityRoutes = require('./routes/community');
 const paymentRoutes = require('./routes/payment');
 const sellerRoutes = require('./routes/seller');
+const friendsRoutes = require('./routes/friends');
+const messagesRoutes = require('./routes/messages');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -92,6 +94,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/community', communityRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/seller', sellerRoutes);
+app.use('/api/friends', friendsRoutes);
+app.use('/api/messages', messagesRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
@@ -112,7 +116,8 @@ app.get('/', (req, res) => {
         updateProfile: 'PUT /api/users/profile',
         instructors: 'GET /api/users/instructors',
         applyInstructor: 'POST /api/users/apply-instructor',
-        publicProfile: 'GET /api/users/:id/profile'
+        publicProfile: 'GET /api/users/:id/profile',
+        people: 'GET /api/users/people'
       },
       courses: {
         list: 'GET /api/courses',
@@ -143,6 +148,21 @@ app.get('/', (req, res) => {
         contributors: 'GET /api/community/contributors',
         events: 'GET /api/community/events',
         attendEvent: 'POST /api/community/events/:id/attend'
+      },
+      friends: {
+        list: 'GET /api/friends/list',
+        requests: 'GET /api/friends/requests',
+        sendRequest: 'POST /api/friends/request',
+        acceptRequest: 'PUT /api/friends/request/:id/accept',
+        rejectRequest: 'PUT /api/friends/request/:id/reject',
+        people: 'GET /api/friends/people'
+      },
+      messages: {
+        send: 'POST /api/messages/send',
+        conversation: 'GET /api/messages/conversation/:userId',
+        conversations: 'GET /api/messages/conversations',
+        markRead: 'PUT /api/messages/:messageId/read',
+        unreadCount: 'GET /api/messages/unread/count'
       },
       payment: {
         initialize: 'POST /api/payment/initialize',
@@ -217,8 +237,7 @@ app.listen(PORT, () => {
   console.log('   GET  /test-uploads - Check uploads folder');
   console.log('   POST /api/auth/signup - Register user');
   console.log('   POST /api/auth/signin - Login user');
-  console.log('   POST /api/seller/apply - Apply as seller');
-  console.log('   POST /api/seller/products - Create product');
-  console.log('   GET  /api/seller/products - Get all products');
+  console.log('   GET  /api/friends/people - Get all people');
+  console.log('   GET  /api/messages/conversations - Get conversations');
   console.log('='.repeat(50) + '\n');
 });
